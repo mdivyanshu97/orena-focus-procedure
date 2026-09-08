@@ -3,6 +3,7 @@
   "released_utc": "2026-09-08",
   "team": "Incision Impossible",
   "track": "PROCEDURE",
+  "release_name": "DISCOVR-PROCEDURE",
   "challenge_algorithm": {
     "name": "DISCOVR PROCEDURE T1",
     "method_id": "c0a82e5c-3b0c-4d54-bed3-777e1dc218af",

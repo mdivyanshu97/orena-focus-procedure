@@ -1,17 +1,18 @@
-# ORena FOCUS PROCEDURE algorithm
+# DISCOVR-PROCEDURE
 
-Public release of the **Incision Impossible** submission to the ORena SAVE
-FOCUS 2026 PROCEDURE track.
+Reproducible release of **DISCOVR-PROCEDURE**, submitted to the ORena SAVE
+FOCUS 2026 PROCEDURE track by team **Incision Impossible**.
 
 This repository contains the exact inference source recovered from the selected
-W64→NW2 container. The two merged checkpoints are public on Hugging Face and
-can be downloaded into the Docker build context with one command.
+W64→NW2 container. The two merged checkpoints are hosted separately on Hugging
+Face and can be downloaded into the Docker build context with one command.
 
 ## Selected challenge submission
 
 | Field | Value |
 |---|---|
-| Algorithm | `DISCOVR PROCEDURE T1` |
+| Release name | `DISCOVR-PROCEDURE` |
+| Grand Challenge algorithm | `DISCOVR PROCEDURE T1` |
 | Method ID | `c0a82e5c-3b0c-4d54-bed3-777e1dc218af` |
 | Image version | `abe8063f-78f1-43ea-93ea-0b70c3eca1cd` |
 | Evaluation ID | `a8fa6296-e08b-40b7-b2e5-759ba657fe6d` |
@@ -38,7 +39,7 @@ question-derived answer formatting, and defensive batch output.
 
 ## Weights
 
-Both merged checkpoints are public at:
+Both merged checkpoints are hosted at:
 
 `https://huggingface.co/Div97/orena-focus-procedure-w64-nw2`
 
@@ -63,6 +64,8 @@ The download script pins Hugging Face revision
 ## Build
 
 ```bash
+python scripts/download_weights.py
+python scripts/verify_release.py
 ./do_build.sh
 ./do_save.sh
 ```
@@ -71,6 +74,18 @@ To run `./do_test_run.sh`, first provide a compatible Grand Challenge fixture
 under `test/input/interface_1/`. The original fixture is intentionally not
 redistributed because challenge videos and annotations are not part of this
 source release.
+
+## Included release scripts
+
+- `scripts/download_weights.py` downloads both exact checkpoints at their
+  pinned Hugging Face revision.
+- `scripts/verify_release.py` verifies the recovered source and both model
+  SHA-256 values.
+- `do_build.sh` validates that both checkpoints are present and builds the
+  `linux/amd64` challenge image.
+- `do_test_run.sh` runs the image offline with the NVIDIA runtime and checks
+  that `answer.json` contains exactly one response per request.
+- `do_save.sh` rebuilds and exports the uploadable Docker archive.
 
 ## Reproducibility and provenance
 
