@@ -119,15 +119,15 @@ overlap with official test questions or test videos.
 
 ### 3.1 Frame sampling
 
-For a video interval bounded by frame indices \(i_s\) and \(i_e\), \(K\)
+For a video interval bounded by frame indices $i_s$ and $i_e$, $K$
 chronological frames are selected as
 
-\[
+$$
 i_j =
 \operatorname{round}\left(
 i_s + \frac{j}{K-1}(i_e-i_s)
 \right), \qquad j=0,\ldots,K-1.
-\]
+$$
 
 Indices are clamped, de-duplicated, and decoded directly. Images are
 downscaled with bilinear interpolation when their longest side exceeds 768
@@ -144,10 +144,10 @@ frames increase coverage without changing model parameters.
 Temporal answers use absolute procedure timestamps. The runtime receives
 trimmed clips whose local time begins at zero, so each frame is annotated with
 
-\[
+$$
 t_{\text{absolute}} =
 t_{\text{request-start}} + t_{\text{clip}}.
-\]
+$$
 
 The resulting `hh:mm:ss` timestamp is rendered in yellow with a black outline.
 The same convention was used during FOCUS fine-tuning for temporal questions.
@@ -157,13 +157,13 @@ The same convention was used during FOCUS fine-tuning for temporal questions.
 ### 4.1 Shared architecture
 
 W64 and NW2 are independent low-rank adaptations of
-Qwen3-VL-4B-Instruct. For each adapted language weight \(W\), LoRA applies
+Qwen3-VL-4B-Instruct. For each adapted language weight $W$, LoRA applies
 
-\[
+$$
 W' = W + \frac{\alpha}{r} BA,
-\]
+$$
 
-with rank \(r=16\), alpha \(\alpha=32\), and dropout 0.05. Adapters are placed
+with rank $r=16$, alpha $\alpha=32$, and dropout 0.05. Adapters are placed
 in the query, key, value, and output attention projections and the gate, up,
 and down MLP projections. The visual encoder and vision-language merger remain
 frozen in both PROCEDURE models.
@@ -173,7 +173,7 @@ frozen in both PROCEDURE models.
 The shared warm-up adapter was trained for one epoch on four GPUs using
 per-device batch size 2 and two gradient-accumulation steps, giving an
 effective batch size of 16 and 3,675 optimizer updates. Training used bfloat16,
-fused AdamW, learning rate \(10^{-4}\), cosine decay, a 3% warm-up fraction,
+fused AdamW, learning rate $10^{-4}$, cosine decay, a 3% warm-up fraction,
 zero weight decay, gradient clipping at 1.0, gradient checkpointing, and
 random seed 42.
 
@@ -207,15 +207,15 @@ not inferred from the W64 recipe.
 
 ### 4.5 Learning objective
 
-Only answer tokens contribute to the supervised loss. If \(\mathcal{A}\)
+Only answer tokens contribute to the supervised loss. If $\mathcal{A}$
 denotes answer-token positions,
 
-\[
+$$
 \mathcal{L} =
 -\frac{1}{|\mathcal{A}|}
 \sum_{t \in \mathcal{A}}
 \log p_\theta(y_t \mid x, y_{<t}).
-\]
+$$
 
 System instructions, questions, padding, and visual placeholder tokens are
 masked. For W64, no capability weighting, replay mixture, auxiliary digit
@@ -229,27 +229,27 @@ bfloat16.
 ### 5.1 Stage 0: full-procedure pointer
 
 For a single-timestamp question, W64 receives 128 frames sampled over the
-complete procedure and predicts an initial absolute timestamp \(p_0\). This
+complete procedure and predicts an initial absolute timestamp $p_0$. This
 stage favors temporal coverage over local precision.
 
 ### 5.2 Stage 1: intermediate refinement
 
-If \(p_0\) is valid, NW2 receives 128 frames from the clamped interval
+If $p_0$ is valid, NW2 receives 128 frames from the clamped interval
 
-\[
+$$
 W_1 = [p_0-600\text{ s},\,p_0+600\text{ s}]
-\]
+$$
 
-and predicts \(p_1\). The frame spacing is now substantially smaller than in
+and predicts $p_1$. The frame spacing is now substantially smaller than in
 the full-procedure view.
 
 ### 5.3 Stage 2: local refinement
 
-If \(p_1\) is valid, NW2 receives 64 frames from
+If $p_1$ is valid, NW2 receives 64 frames from
 
-\[
+$$
 W_2 = [p_1-50\text{ s},\,p_1+50\text{ s}]
-\]
+$$
 
 and produces the final timestamp. Every temporal stage uses the absolute-time
 overlay. If a stage does not yield a parseable timestamp, the cascade stops
