@@ -20,22 +20,38 @@ Face and can be downloaded into the Docker build context with one command.
 | Clinical pre-evaluation score | `0.5572717019874663` |
 | Forfeited / unanswered | `0 / 0` |
 
-## Method
+## Method at a glance
 
-The algorithm packages two independently merged
-`Qwen/Qwen3-VL-4B-Instruct` checkpoints and keeps at most one resident on the
-GPU:
+DISCOVR-PROCEDURE packages two independently merged
+`Qwen/Qwen3-VL-4B-Instruct` checkpoints. It executes them in two phases so that
+at most one 4B model is resident on the GPU.
 
-1. **W64** performs the broad full-procedure pointer for single-timestamp
-   temporal questions.
-2. W64 is unloaded and **NW2** performs the localized refinement passes and
-   answers all ordinary questions.
-3. Timestamped binary reappearance questions use post-anchor presence
-   rewrites; needle questions inspect four chunks with an early-stop OR.
+```mermaid
+flowchart TD
+    A["Batch input<br/>request.json + plain/qID.mp4"] --> B["Infer answer format<br/>and route each question"]
+    B --> C{"Single-timestamp<br/>time question?"}
+    C -- Yes --> D["W64 stage 0<br/>128 frames over full procedure"]
+    D --> E["Store timestamp + 1200 s window"]
+    E --> F["Unload W64"]
+    C -- No --> G["Queue direct NW2 route"]
+    F --> H["Load NW2"]
+    G --> H
+    H --> I{"Question route"}
+    I -- Temporal --> J["NW2 refinement<br/>128 frames in 1200 s window"]
+    J --> K["NW2 refinement<br/>64 frames in 100 s window"]
+    I -- Reappearance --> L["Post-anchor presence query<br/>64 frames"]
+    I -- Needle reappearance --> M["Four post-anchor chunks<br/>64 frames each, early yes OR"]
+    I -- Ordinary --> N["NW2 direct answer<br/>64 frames over full clip"]
+    K --> O["Format-constrained cleanup"]
+    L --> O
+    M --> O
+    N --> O
+    O --> P["Atomic answer.json<br/>one response per qID"]
+```
 
-The temporal cascade uses frame counts `(128, 128, 64)` and window widths
-`(1200 s, 100 s)`. Other shared features include absolute-time overlays,
-question-derived answer formatting, and defensive batch output.
+The temporal cascade uses frame counts `(128, 128, 64)` and full window widths
+`(1200 s, 100 s)`. See [METHOD.md](METHOD.md) for the complete routing,
+training, memory-management, and runtime description.
 
 ## Weights
 
