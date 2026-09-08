@@ -1,0 +1,9 @@
+resources/w64/
+resources/nw2/
+test/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+*.tar.gz
+*.log

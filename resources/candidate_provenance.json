@@ -1,0 +1,38 @@
+{
+  "candidate": "w64-nw2-cross-procedure-reappearance-presence",
+  "track": "procedure",
+  "routing": {
+    "ordinary_questions": "NW2 merged",
+    "single_timestamp_stage_0": "W64 merged",
+    "single_timestamp_stages_1_2": "NW2 merged",
+    "cascade_width_seconds": [1200.0, 100.0],
+    "cascade_frames": [128, 128, 64],
+    "binary_reappearance_default": "NW2 merged; 64 post-anchor frames; object-presence rewrite",
+    "binary_reappearance_needle": "NW2 merged; four post-anchor 64-frame chunks; presence OR"
+  },
+  "runtime": {
+    "strategy": "sequential model residency",
+    "phase_1": "run all W64 stage-0 pointers",
+    "phase_2": "unload W64, then load NW2 for refinements and ordinary rows",
+    "maximum_resident_models": 1
+  },
+  "offline_measurement": {
+    "full_procedure_score": 0.5931,
+    "nw2_full_procedure_score": 0.5875,
+    "single_timestamp_cross_score": 0.4432,
+    "single_timestamp_w64_score": 0.3926,
+    "single_timestamp_nw2_score": 0.4131,
+    "binary_reappearance_gate": {
+      "heico_baseline": "13/24",
+      "heico_candidate": "23/24",
+      "lapchole_baseline": "30/47",
+      "lapchole_candidate": "37/47",
+      "combined_baseline": "43/71",
+      "combined_candidate": "60/71"
+    }
+  },
+  "weights": {
+    "w64_model_sha256": "0647d7204fccbf708e5b15d8312d03062e86bea61310580b5eca97999c33fe4d",
+    "nw2_model_sha256": "3c032078c4e98a33bd7deb6b0f285ed45f0414d118fa1a086bd35d64546ba3e9"
+  }
+}
