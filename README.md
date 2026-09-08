@@ -50,8 +50,11 @@ flowchart TD
 ```
 
 The temporal cascade uses frame counts `(128, 128, 64)` and full window widths
-`(1200 s, 100 s)`. See [METHOD.md](METHOD.md) for the complete routing,
-training, memory-management, and runtime description.
+`(1200 s, 100 s)`. See [METHOD.md](METHOD.md) for the concise implementation
+description and [METHOD_DESCRIPTION.md](METHOD_DESCRIPTION.md) for the detailed
+challenge-submission draft covering data generation, model training,
+inference, evaluation, provenance, limitations, and the remaining NW2
+provenance checks.
 
 ## Weights
 
@@ -106,6 +109,7 @@ source release.
 ## Reproducibility and provenance
 
 See [TRAINING.md](TRAINING.md),
+[METHOD_DESCRIPTION.md](METHOD_DESCRIPTION.md),
 [resources/candidate_provenance.json](resources/candidate_provenance.json),
 and [provenance/release.json](provenance/release.json).
 
