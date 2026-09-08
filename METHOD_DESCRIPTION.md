@@ -1,464 +1,332 @@
-# DISCOVR-PROCEDURE: detailed method description
+# DISCOVR-PROCEDURE: scientific method description
 
-> Draft for the ORena SAVE FOCUS 2026 method-description submission.
-> Reconstructed on 8 September 2026 from the selected container, public
-> checkpoints, training manifests, trainer states, run scripts, cross-machine
-> handoffs, and artifact checksums.
+## Abstract
 
-## 1. Submission identification
+DISCOVR-PROCEDURE is a long-video question-answering method for reasoning about
+foreign objects over complete surgical procedures. A procedure can last more
+than an hour, making a single uniformly sampled representation too sparse for
+precise temporal localization. The method therefore separates broad temporal
+search from localized visual interpretation.
 
-| Field | Value |
-|---|---|
-| Team | Incision Impossible |
-| Public method name | DISCOVR-PROCEDURE |
-| Track | PROCEDURE |
-| Grand Challenge algorithm | `DISCOVR PROCEDURE T1` |
-| Method ID | `c0a82e5c-3b0c-4d54-bed3-777e1dc218af` |
-| Selected image version | `abe8063f-78f1-43ea-93ea-0b70c3eca1cd` |
-| Pre-evaluation ID | `a8fa6296-e08b-40b7-b2e5-759ba657fe6d` |
-| Base model family | `Qwen/Qwen3-VL-4B-Instruct` |
-| Released checkpoints | W64 and NW2, merged bfloat16 |
+Two independently adapted Qwen3-VL-4B models are used. **W64** acts as a
+full-procedure temporal pointer. **NW2** answers ordinary questions and refines
+the temporal pointer within progressively narrower windows. The models share a
+surgical scene-understanding warm start and joint supervision from the FRAME,
+SEGMENT, and PROCEDURE training tracks, but they occupy distinct functional
+roles during inference.
 
-The exact source release is
-[`mdivyanshu97/orena-focus-procedure`](https://github.com/mdivyanshu97/orena-focus-procedure).
-Both merged checkpoints are published at
-[`Div97/orena-focus-procedure-w64-nw2`](https://huggingface.co/Div97/orena-focus-procedure-w64-nw2).
+For a single-timestamp question, W64 first examines 128 frames spanning the
+complete procedure. NW2 then examines 128 frames in a 20-minute window around
+the initial prediction and finally 64 frames in a 100-second window. A separate
+post-anchor route converts timestamped reappearance questions into direct
+visual-presence questions. W64 and NW2 are loaded sequentially so that only one
+4-billion-parameter model resides on the GPU at a time.
 
-## 2. Abstract
+The system performs all computation locally and uses no external inference
+service, detector, or manually generated test-time annotation.
 
-DISCOVR-PROCEDURE answers foreign-object questions over long surgical
-procedures with a sequential two-model Qwen3-VL system:
+## 1. Motivation
 
-- **W64** provides a broad full-procedure pointer for single-timestamp
-  questions.
-- **NW2** answers ordinary questions, performs localized timestamp
-  refinement, and handles a targeted post-anchor reappearance route.
+Long surgical procedures create a fundamental evidence-density problem. With
+64 uniformly spaced frames over a 60-minute procedure, adjacent observations
+are roughly one minute apart. Increasing the number of frames everywhere is
+computationally expensive and still provides limited local detail.
 
-Both checkpoints are independently merged LoRA adaptations of
-Qwen3-VL-4B-Instruct. They are never resident on the GPU simultaneously:
-the container runs all W64 work, releases W64 and its CUDA allocations, then
-loads NW2 once for the remaining work.
+DISCOVR-PROCEDURE instead implements coarse-to-fine temporal inference:
 
-The method combines joint all-track supervised fine-tuning, deterministic
-answer-format inference, absolute-time overlays, a three-pass temporal
-cascade, and a narrow inference-time rewrite for reappearance questions. It
-uses no network service, external API, retrieval index, or human interaction.
+1. obtain a broad event pointer from the entire video;
+2. resample densely near that pointer;
+3. refine once more in a short local window; and
+4. use a separate direct-answer pathway for questions that do not require
+   timestamp search.
 
-## 3. System overview
+This structure treats temporal localization as an iterative search problem
+while retaining a general vision-language model for object recognition,
+counting, aggregation, and reasoning.
 
 ```mermaid
-flowchart TD
-    A["Batch requests"] --> B["Infer format and route"]
-    B --> C{"Single-timestamp<br/>question?"}
-    C -- Yes --> D["Load W64"]
-    D --> E["128 frames over full procedure<br/>broad timestamp pointer"]
-    E --> F["Store answer and 1200 s window on CPU"]
-    F --> G["Unload W64 and clear CUDA state"]
-    C -- No --> H["Queue direct NW2 question"]
-    G --> I["Load NW2"]
+flowchart LR
+    A["Procedure question"] --> B{"Single timestamp?"}
+    B -- Yes --> C["W64: 128 frames<br/>full procedure"]
+    C --> D["NW2: 128 frames<br/>20-minute window"]
+    D --> E["NW2: 64 frames<br/>100-second window"]
+    B -- No --> F{"Reappearance template?"}
+    F -- Yes --> G["NW2 post-anchor<br/>presence reasoning"]
+    F -- No --> H["NW2: 64 frames<br/>full procedure"]
+    E --> I["Answer normalization"]
+    G --> I
     H --> I
-    I --> J{"NW2 route"}
-    J -- "temporal refinement" --> K["128 frames / 1200 s<br/>then 64 frames / 100 s"]
-    J -- "reappearance" --> L["post-anchor presence query"]
-    J -- "needle reappearance" --> M["four 64-frame chunks<br/>early yes OR"]
-    J -- "ordinary" --> N["64 frames over full procedure"]
-    K --> O["Format cleanup"]
-    L --> O
-    M --> O
-    N --> O
-    O --> P["Atomic answer.json"]
 ```
 
-## 4. Models
+## 2. Training data
 
-### 4.1 Shared base
+### 2.1 Joint FOCUS supervision
 
-Both models use
-[`Qwen/Qwen3-VL-4B-Instruct`](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct)
-and were merged in bfloat16. Neither selected model is the FullVis model used
-by DISCOVR-SEGMENT.
-
-### 4.2 W64
-
-W64 is the language-only SSG-warm-start model
-`q3vl4b_alltracks_ssgwarm64f_bf16_e3`.
-
-Its LoRA adapter targets seven language projections:
-
-- attention: `q_proj`, `k_proj`, `v_proj`, `o_proj`;
-- MLP: `gate_proj`, `up_proj`, `down_proj`.
-
-The LoRA configuration is rank 16, alpha 32, dropout 0.05, no bias
-adaptation, and no DoRA. The vision encoder and merger are frozen.
-
-### 4.3 NW2
-
-The surviving merge provenance identifies NW2 as:
-
-| Field | Recovered value |
-|---|---|
-| Adapter name | `q3vl4b_nw2` |
-| Adapter role | continued adapter |
-| Warm start | language-only `q3vl4b_ssg_aux` |
-| Training manifest | `capped_v1_64f.jsonl` |
-| Tracks | FRAME, SEGMENT, PROCEDURE |
-| LoRA rank / alpha | 16 / 32 |
-| Quantization | none |
-| Merge | `peft.merge_and_unload`, bfloat16 |
-| Adapter hash head | `59a7ced331f55fe8197938e6045e171c5486651f83ceb021e71c80d51e432b83` |
-
-Because NW2 continued the language-only SSG adapter, its trainable LoRA sites
-were the same seven language projections as W64. It did not use the
-FullVis vision/merger adaptation.
-
-The original NW2 adapter directory, `capped_v1_64f.jsonl`, and launch log were
-created on the peer H200 training machine and are not present in the surviving
-handoff. Consequently, the exact NW2 row count, manifest-generation rule,
-epoch count, batch configuration, optimizer schedule, and selected optimizer
-step cannot be stated as recovered facts. They are listed explicitly in
-Section 18 rather than being inferred from W64 defaults.
-
-## 5. Shared FOCUS training data
-
-W64 used `alltracks_train_v2_64f.jsonl`, a joint official-train export.
-
-| Property | Value |
-|---|---:|
-| Rows | 34,290 |
-| File size | 196,783,311 bytes |
-| SHA-256 | `48f79a5ae40971a43c47bf8686d26280a0d24a2eecf0ce4e2de2f70020c177da` |
-| MD5 | `4977ecd14092719ab797760de09f37b7` |
-| HeiCo rows | 20,000 |
-| LapChole rows | 14,290 |
-| FRAME rows | 13,730 |
-| SEGMENT rows | 13,680 |
-| PROCEDURE rows | 6,880 |
-
-Breakdown by dataset and track:
+W64's task-specific corpus contains 34,290 official training questions from
+HeiCo and LapChole. Questions from all three tracks are used so that the model
+learns frame-level appearance, segment-level temporal context, and
+procedure-level reasoning jointly. Retained NW2 metadata confirms supervision
+from the same three tracks, but does not establish that NW2 used this exact
+export or row count.
 
 | Dataset | FRAME | SEGMENT | PROCEDURE | Total |
 |---|---:|---:|---:|---:|
 | HeiCo | 8,000 | 8,000 | 4,000 | 20,000 |
 | LapChole | 5,730 | 5,680 | 2,880 | 14,290 |
+| **Total** | **13,730** | **13,680** | **6,880** | **34,290** |
 
-The source manifest referenced 20 HeiCo training videos and 72 LapChole
-training videos overall.
-
-Answer formats:
-
-| Format | Rows |
-|---|---:|
-| Foreign-object class | 11,531 |
-| Timestamp | 8,375 |
-| Integer | 6,556 |
-| Multiple choice | 3,146 |
-| Binary | 2,791 |
-| Open ended | 1,807 |
-| Percentage | 84 |
-
-## 6. FOCUS data generation
-
-Each official training question was converted into one chat-style SFT record
-containing its dataset, track, question ID, source-video path, annotated time
-interval, system prompt, question, format hint, organizer-provided answer,
-answer format, primary capability, frame count, and overlay flag.
-
-No new human FOCUS annotations were created. The builder reformatted official
-training annotations; it did not use test answers or pseudo-labels.
-
-The selected manifest assigned one frame to FRAME rows and 64 frames to both
-SEGMENT and PROCEDURE rows. Temporal overlays were enabled for timestamp,
-temporal-localization, duration-estimation, and temporal-ordering rows, giving
-8,732 overlay rows.
-
-Frames were uniformly sampled within the annotated interval, downscaled to a
-maximum side of 768 pixels, and cached as quality-95 JPEG files. Temporal rows
-received a yellow, black-outlined absolute-procedure clock derived from source
-frame index and FPS.
-
-The selected historical manifest contained different system-prompt snapshots:
-HeiCo rows included the then-current surgical knowledge card, while LapChole
-rows did not. The deployed PROCEDURE prompt does not include the card.
-
-## 7. Historical dataset-snapshot note
-
-W64 used the exact July 2026 manifest identified by the hashes above. A later
-audit against newer dataset revisions found 5.3% row revision drift but:
-
-- zero official test-split rows;
-- zero answer-format drift on joined rows;
-- zero cross-track ID artifacts; and
-- no evidence that the builder invented labels.
-
-Thirty-nine LapChole targets contained `Unknown foreign object`; this was a
-real value in an older upstream revision and was removed later. Corrected
-manifests were built, but W64 continued to use the historical export.
-
-The exact relationship between `capped_v1_64f.jsonl` and this historical
-all-track export—and whether it incorporates the same historical rows—must
-still be recovered from the peer training machine.
-
-## 8. SSG-VQA warm start used by W64 and NW2
-
-The language-only `q3vl4b_ssg_aux` adapter was trained on a 60,000-row subset
-of a larger 238,925-row SSG-VQA/CholecT45 scene-literacy manifest:
-
-- 58,800 rows were used for optimization;
-- 1,200 rows were held out for row-random evaluation;
-- one epoch produced 3,675 optimizer steps at global batch 16.
-
-The full source manifest was generated by pairing
-[SSG-VQA](https://github.com/camma-public/ssg-vqa) questions with CholecT45
-frame records. It contains 45 source videos and 24,250 unique frames.
-
-The retained question types were spatial localization, count, existence,
-component query, and presence. The builder capped each `(frame, question
-type)` cell at two questions and kept the original scene answers rather than
-mapping them to FOCUS labels.
-
-The warm-up configuration recovered from `training_args.bin` and the final
-adapter is:
-
-| Hyperparameter | Value |
-|---|---|
-| Base | Qwen3-VL-4B-Instruct |
-| Holdout split seed | 0 |
-| Epochs | 1 |
-| GPUs | 4 |
-| Per-device batch | 2 |
-| Gradient accumulation | 2 |
-| Effective global batch | 16 |
-| Optimizer steps | 3,675 |
-| Learning rate | `1e-4` |
-| Optimizer | fused AdamW |
-| Scheduler | cosine |
-| Warm-up ratio | 0.03 |
-| Weight decay | 0 |
-| Gradient clipping | 1.0 |
-| Precision | bfloat16 |
-| Gradient checkpointing | enabled |
-| LoRA | language-only, rank 16, alpha 32, dropout 0.05 |
-| Seed | 42 |
-
-The surviving files do not identify the exact rule used to choose the
-60,000-row subset from the larger manifest. This is a provenance item to
-recover, not an assumption to fill with a new sampling rule.
-
-SSG-VQA is provided for non-commercial scientific research under CC
-BY-NC-SA 4.0. Users of the released checkpoints remain responsible for the
-source data terms.
-
-## 9. W64 fine-tuning
-
-W64 continued the language-only SSG adapter on the 34,290-row FOCUS manifest.
-
-| Hyperparameter | Value |
-|---|---|
-| Row-random evaluation holdout | 3% |
-| Training rows | 33,262 |
-| Evaluation rows | 1,028 |
-| Holdout split seed | 0 |
-| Epochs scheduled | 3 |
-| GPUs | 4 |
-| Per-device batch | 1 |
-| Gradient accumulation | 4 |
-| Effective global batch | 16 |
-| Total schedule | 6,237 optimizer steps |
-| Learning rate | `1e-4` |
-| Optimizer | fused AdamW |
-| Scheduler | cosine |
-| Warm-up ratio | 0.03 |
-| Weight decay | 0 |
-| Gradient clipping | 1.0 |
-| Precision | bfloat16 |
-| Gradient checkpointing | enabled |
-| Maximum frames | 64 |
-| Maximum image side | 768 pixels |
-| Seed | 42 |
-| Best-checkpoint criterion | lowest evaluation loss |
-
-The best checkpoint was step 5,200, approximately epoch 2.50, with evaluation
-loss 0.2887436. `load_best_model_at_end` restored that checkpoint before the
-top-level adapter was saved and merged.
-
-The exact launch recipe is reproducible from the surviving run script:
-
-```text
-base=Qwen/Qwen3-VL-4B-Instruct
-init_adapter=q3vl4b_ssg_aux
-data=alltracks_train_v2_64f.jsonl
-tracks=frame,segment,procedure
-epochs=3
-per_device_batch=1
-gradient_accumulation=4
-world_size=4
-learning_rate=1e-4
-max_frames=64
-max_long_side=768
-temporal_overlay=true
-eval_fraction=0.03
-load_best=true
-```
-
-## 10. Training objective
-
-The system applied the Qwen chat template to the system prompt, sampled image
-sequence, and format-augmented question. Padding, the complete prompt, and
-vision placeholders were masked, so cross-entropy was computed only on the
-gold answer tokens.
-
-The loss was the mean over supervised answer tokens and then over examples.
-No capability weighting, replay mixture, auxiliary digit loss, or 4-bit
-quantization was used in W64. A trailing-logit optimization avoided allocating
-full-vocabulary logits for thousands of masked visual/prompt positions without
-changing the supervised objective.
-
-NW2's merge provenance confirms the same adapter family and warm start, but
-the unavailable launch log prevents claiming that every optimizer setting
-matched W64.
-
-## 11. Model merge and hashes
-
-Both adapters were merged into Qwen3-VL-4B-Instruct with
-`peft.merge_and_unload` and saved in bfloat16.
-
-| Artifact | SHA-256 |
-|---|---|
-| W64 `model.safetensors` | `0647d7204fccbf708e5b15d8312d03062e86bea61310580b5eca97999c33fe4d` |
-| NW2 `model.safetensors` | `3c032078c4e98a33bd7deb6b0f285ed45f0414d118fa1a086bd35d64546ba3e9` |
-| Selected `inference.py` | `3d12f0bd959408a6ae1f88f325e56e0e20d6097af7ec38e0e9cba7c7e84dbd7b` |
-
-Each merged weight file is 8,875,719,408 bytes.
-
-## 12. Inference
-
-### 12.1 Prompt, format, and video time
-
-The container uses its bundled foreign-object definitions and a concise
-surgical VQA instruction. The PROCEDURE knowledge card is disabled.
-
-Because answer format is absent from runtime requests, a deterministic
-question-text classifier infers binary, integer, percentage, class, timestamp,
-multiple-choice, or open-ended output. It selects the format instruction and
-cleanup function.
-
-The platform-provided overlayed clip starts its clock at the trimmed clip
-boundary. The model was trained with absolute procedure time, so the container
-decodes the plain clip and redraws the absolute clock as:
-
-`request start_time + frame offset`.
-
-### 12.2 Sequential model residency
-
-The batch is divided into two phases:
-
-1. W64 is loaded only if the batch contains a single-timestamp route.
-2. W64 runs every broad stage-0 pointer.
-3. Small CPU records retain the answer, translated window, timing, and failure
-   state.
-4. W64 is deleted, Python garbage collection runs, and CUDA caches are cleared.
-5. NW2 is loaded and warmed once.
-6. NW2 performs refinements and all direct routes.
-
-This bounds peak residency to one 4B model.
-
-### 12.3 Temporal cascade
-
-The temporal route is restricted to questions requiring one timestamp.
-
-| Stage | Model | Evidence |
-|---|---|---|
-| 0 | W64 | 128 frames across the full procedure |
-| 1 | NW2 | 128 frames in a 1,200-second window centered on the W64 timestamp |
-| 2 | NW2 | 64 frames in a 100-second window centered on the Stage-1 timestamp |
-
-All temporal passes use the absolute-time overlay and a 16-token generation
-cap. A later stage runs only when the previous answer contains a valid
-timestamp. Windows are translated to clip-relative coordinates and clamped to
-the available video.
-
-Multi-event timestamp-list questions skip this single-center cascade.
-
-### 12.4 Ordinary questions
-
-NW2 answers ordinary questions directly with 64 frames uniformly sampled over
-the complete procedure. Images are downscaled to a maximum side of 768 pixels.
-Generation is greedy and deterministic, with a 64-token cap.
-
-### 12.5 Reappearance-presence route
-
-The runtime recognizes the narrow binary template:
-
-> Does the object, last visible just before `<timestamp>`, re-appear later in
-> the video?
-
-For matching rows, it samples only after the timestamp and rewrites the
-question as direct visual presence:
-
-> Looking only at these chronological frames, is the named object visible in
-> any frame?
-
-For ordinary objects, NW2 receives one 64-frame post-anchor view. Needle uses
-four chronological post-anchor chunks of 64 frames each because the object can
-be very brief. The system stops early and returns `yes` if any chunk returns
-`yes`; completed all-`no` chunks return `no`.
-
-This is an inference-time transformation. It introduced no new training label
-or model parameter.
-
-### 12.6 Output normalization and reliability
-
-Generated text is normalized into the evaluator's strict formats. The
-container preserves request order, isolates per-question failures, emits one
-response per recoverable question ID, and writes `answer.json` atomically.
-Model setup failures are raised rather than converted into an all-empty batch.
-
-### 12.7 Container environment
-
-The released `linux/amd64` image is based on
-`pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime`. Principal pinned runtime
-packages are PyTorch 2.11.0, `orena-focus` 0.3.5, Transformers 5.4.0,
-`qwen-vl-utils` 0.0.14, PEFT 0.19.1, Accelerate 1.14.0, and Safetensors
-0.7.0. A build-time guard checks that the installed PyTorch remains a CUDA
-12.8 build with the required GPU architectures.
-
-## 13. Model and route selection
-
-W64 was retained as the broad pointer because its full-procedure temporal
-localization complemented NW2's localized answering. NW2 was retained for
-ordinary questions and refinement based on paired local evaluation.
-
-The reappearance route was tested on matching HeiCo and LapChole questions:
-
-| Track subset | Baseline | Reappearance route |
-|---|---:|---:|
-| HeiCo PROCEDURE | 13/24 | 23/24 |
-| LapChole PROCEDURE | 30/47 | 37/47 |
-| Combined | 43/71 | 60/71 |
-
-A blanket change from 64 to 128 post-anchor frames was rejected: with the
-four-chunk Needle route retained, it reduced the combined targeted result from
-60/71 to 59/71.
-
-These local gates guided route selection; they are not presented as hidden
-test-set estimates.
-
-## 14. Official pre-evaluation result
-
-| Metric | Value |
-|---|---:|
-| Technical pre-evaluation score | 0.4112059082 |
-| Clinical pre-evaluation score | 0.5572717020 |
-| Clinically relevant questions | 782 |
-| Questions | 1,000 |
-| Batches | 5 |
-| Questions forfeited | 0 |
-| Questions unanswered | 0 |
-| Mean batch duration | 2,617.8435 s |
-| Mean net latency per question | 12.4892 s |
-| Throughput including setup | 0.0764 questions/s |
-
-Bucket accuracies:
+The corpus spans 20 HeiCo and 72 LapChole training videos. Its answer formats
+comprise 11,531 foreign-object classification targets, 8,375 timestamps, 6,556
+integers, 3,146 multiple-choice answers, 2,791 binary answers, 1,807
+open-ended answers, and 84 percentages.
+
+Each question was converted to a multimodal chat example containing its video
+interval, answer format, capability label, and organizer-provided answer. A
+format-specific instruction was appended to the question so that strict
+answers were learned in their evaluated representation, for example a bare
+integer or an `hh:mm:ss` timestamp.
+
+This conversion did not introduce new semantic annotations. It reformatted the
+official training data for supervised instruction tuning and used no test
+answers.
+
+### 2.2 Surgical scene warm-up
+
+Both deployed models originate from a language-adapter warm start trained on
+60,000 examples selected from a larger 238,925-question
+SSG-VQA/CholecT45 corpus. The complete corpus contains 24,250 unique frames
+from 45 laparoscopic videos and covers object presence, counting, spatial
+localization, and component identification.
+
+SSG-VQA questions were joined to CholecT45 frames using video and frame
+identifiers. Alternate annotations of the same source video were
+de-duplicated, and each frame contributed at most two questions from a given
+question family. The original surgical scene answers were retained rather
+than mapped into the FOCUS foreign-object classes.
+
+Of the 60,000 warm-up examples, 58,800 were used for optimization and 1,200
+for loss monitoring. This stage trained rank-16 adapters in the language
+attention and MLP projections while keeping the visual encoder frozen.
+
+### 2.3 Dataset provenance
+
+The deployed models were developed from historical training snapshots
+available during the challenge. A later audit of the primary FOCUS corpus
+against updated dataset revisions found identifier and label changes but no
+overlap with official test questions or test videos.
+
+## 3. Visual representation
+
+### 3.1 Frame sampling
+
+For a video interval bounded by frame indices \(i_s\) and \(i_e\), \(K\)
+chronological frames are selected as
+
+\[
+i_j =
+\operatorname{round}\left(
+i_s + \frac{j}{K-1}(i_e-i_s)
+\right), \qquad j=0,\ldots,K-1.
+\]
+
+Indices are clamped, de-duplicated, and decoded directly. Images are
+downscaled with bilinear interpolation when their longest side exceeds 768
+pixels. Training images were pre-extracted to a deterministic quality-95 JPEG
+cache.
+
+FRAME examples use one image, whereas SEGMENT and PROCEDURE examples use up to
+64. Inference may use 128 images for the first two stages of temporal search,
+even though the task models were trained with a 64-frame cap; the additional
+frames increase coverage without changing model parameters.
+
+### 3.2 Absolute procedure time
+
+Temporal answers use absolute procedure timestamps. The runtime receives
+trimmed clips whose local time begins at zero, so each frame is annotated with
+
+\[
+t_{\text{absolute}} =
+t_{\text{request-start}} + t_{\text{clip}}.
+\]
+
+The resulting `hh:mm:ss` timestamp is rendered in yellow with a black outline.
+The same convention was used during FOCUS fine-tuning for temporal questions.
+
+## 4. Model training
+
+### 4.1 Shared architecture
+
+W64 and NW2 are independent low-rank adaptations of
+Qwen3-VL-4B-Instruct. For each adapted language weight \(W\), LoRA applies
+
+\[
+W' = W + \frac{\alpha}{r} BA,
+\]
+
+with rank \(r=16\), alpha \(\alpha=32\), and dropout 0.05. Adapters are placed
+in the query, key, value, and output attention projections and the gate, up,
+and down MLP projections. The visual encoder and vision-language merger remain
+frozen in both PROCEDURE models.
+
+### 4.2 Language-only surgical warm-up
+
+The shared warm-up adapter was trained for one epoch on four GPUs using
+per-device batch size 2 and two gradient-accumulation steps, giving an
+effective batch size of 16 and 3,675 optimizer updates. Training used bfloat16,
+fused AdamW, learning rate \(10^{-4}\), cosine decay, a 3% warm-up fraction,
+zero weight decay, gradient clipping at 1.0, gradient checkpointing, and
+random seed 42.
+
+### 4.3 W64 fine-tuning
+
+W64 continues the warm-up adapter on the 34,290-example joint FOCUS corpus.
+A row-random split assigns 33,262 examples to optimization and 1,028 to loss
+monitoring. Training is scheduled for three epochs on four GPUs with
+per-device batch size 1 and four gradient-accumulation steps, again yielding
+an effective batch size of 16.
+
+The optimizer and precision settings match the warm-up stage. Evaluation loss
+is measured every 200 optimizer steps, and the lowest-loss checkpoint is
+restored at the end. The selected W64 checkpoint occurs at step 5,200,
+approximately 2.5 epochs, with evaluation loss 0.2887.
+
+### 4.4 NW2 fine-tuning
+
+NW2 is a second rank-16 language-only adapter initialized from the same
+surgical scene warm-up. It is continued jointly on FRAME, SEGMENT, and
+PROCEDURE examples represented with a maximum of 64 frames. The resulting
+model is used for direct answering and localized refinement rather than the
+initial full-procedure pointer.
+
+The retained model configuration establishes the base model, adapter
+structure, warm start, joint-track training, and bfloat16 merge. The original
+NW2 launch log and generated training manifest are not present in the current
+archive, so its exact epoch count and optimizer-step selection must be
+recovered before the final method submission. These values are intentionally
+not inferred from the W64 recipe.
+
+### 4.5 Learning objective
+
+Only answer tokens contribute to the supervised loss. If \(\mathcal{A}\)
+denotes answer-token positions,
+
+\[
+\mathcal{L} =
+-\frac{1}{|\mathcal{A}|}
+\sum_{t \in \mathcal{A}}
+\log p_\theta(y_t \mid x, y_{<t}).
+\]
+
+System instructions, questions, padding, and visual placeholder tokens are
+masked. For W64, no capability weighting, replay mixture, auxiliary digit
+loss, or quantized training is used.
+
+After fine-tuning, each adapter is independently merged into the base model in
+bfloat16.
+
+## 5. Coarse-to-fine temporal inference
+
+### 5.1 Stage 0: full-procedure pointer
+
+For a single-timestamp question, W64 receives 128 frames sampled over the
+complete procedure and predicts an initial absolute timestamp \(p_0\). This
+stage favors temporal coverage over local precision.
+
+### 5.2 Stage 1: intermediate refinement
+
+If \(p_0\) is valid, NW2 receives 128 frames from the clamped interval
+
+\[
+W_1 = [p_0-600\text{ s},\,p_0+600\text{ s}]
+\]
+
+and predicts \(p_1\). The frame spacing is now substantially smaller than in
+the full-procedure view.
+
+### 5.3 Stage 2: local refinement
+
+If \(p_1\) is valid, NW2 receives 64 frames from
+
+\[
+W_2 = [p_1-50\text{ s},\,p_1+50\text{ s}]
+\]
+
+and produces the final timestamp. Every temporal stage uses the absolute-time
+overlay. If a stage does not yield a parseable timestamp, the cascade stops
+rather than sampling around an undefined center.
+
+The cascade is restricted to questions requiring one timestamp. Questions
+that request several time points retain a broad representation so that
+refinement around one event cannot remove evidence for the others.
+
+## 6. Direct NW2 routes
+
+### 6.1 Ordinary questions
+
+Questions that do not require the temporal cascade are answered by NW2 using
+64 frames uniformly sampled over the full procedure. This route covers object
+recognition, counting, aggregation, spatial reasoning, multiple choice, and
+open-ended questions.
+
+### 6.2 Reappearance as post-anchor presence
+
+Some binary questions ask whether an object that was last visible before a
+stated timestamp appears again. A direct full-procedure answer mixes
+pre-anchor and post-anchor evidence, even though only the latter determines
+the answer.
+
+For the recognized reappearance template, the method therefore:
+
+1. extracts the object and timestamp from the question;
+2. discards all video evidence before the timestamp;
+3. samples 64 chronological frames from the remaining interval; and
+4. asks NW2 whether the named object is visible in any frame.
+
+Needles are particularly small and transient. For needle reappearance, the
+post-anchor interval is divided into four chronological subwindows. Each
+subwindow receives 64 frames, and inference stops as soon as one subwindow
+returns `yes`. If all completed subwindows return `no`, the final answer is
+`no`.
+
+This route modifies evidence and wording only; it introduces no additional
+trained model.
+
+## 7. Memory-aware batch execution
+
+Holding both 4B models simultaneously would unnecessarily increase peak GPU
+memory. The container therefore executes the batch in two phases:
+
+1. identify temporal questions and run all W64 pointer passes;
+2. store the resulting timestamps and windows on CPU;
+3. release W64, run garbage collection, and clear CUDA allocations;
+4. load NW2 once; and
+5. run all refinements and direct-answer routes.
+
+If a batch contains no single-timestamp question, W64 is not loaded. This
+sequential-residency design keeps the maximum number of resident models equal
+to one.
+
+## 8. Prompting and output normalization
+
+The runtime prompt contains the foreign-object definitions but no surgical
+knowledge card. The answer format is inferred from the question and appended
+as a concise generation constraint. Decoding is greedy.
+
+Timestamp stages are limited to 16 new tokens, while ordinary NW2 generation
+uses up to 64. Generated text is normalized to exact binary, integer,
+percentage, foreign-object class, timestamp, multiple-choice, or concise
+open-ended representations.
+
+Questions are isolated by independent error boundaries, responses retain input
+order, and the final answer file is written atomically.
+
+## 9. Evaluation
+
+The selected system achieved an official PROCEDURE pre-evaluation score of
+0.4112 and a clinically restricted score of 0.5573. It answered all 1,000
+questions without latency forfeits. Mean net processing time was approximately
+12.49 seconds per question, excluding the platform's one-time batch setup
+allowance.
 
 | Capability | In distribution | Out of distribution |
 |---|---:|---:|
@@ -468,59 +336,28 @@ Bucket accuracies:
 | Temporal grounding | 0.5233 | 0.3742 |
 | Event understanding | 0.6000 | 0.0000 |
 
-## 15. Reproducibility and public artifacts
+The reappearance route was evaluated separately on matching HeiCo and
+LapChole questions. It improved the targeted PROCEDURE subset from 43/71 to
+60/71 correct answers. Increasing every non-needle reappearance pass from 64
+to 128 frames did not improve this result and was therefore not adopted.
 
-The public release contains:
+## 10. Limitations
 
-- the exact selected inference code;
-- W64 and NW2 merged checkpoints;
-- pinned download and SHA-256 verification;
-- Docker build, smoke-test, and export scripts;
-- route modules and candidate provenance; and
-- this detailed method-description draft.
+The cascade can propagate a poor initial pointer into both refinement stages.
+Uniform frame sampling can still miss very brief events, particularly in long
+procedures. The reappearance transformation covers a narrow linguistic
+template and does not generalize automatically to every temporal relation.
+W64's monitoring split is row-random rather than video-disjoint. Complete
+retraining reproducibility for NW2 additionally requires recovery of its
+original launch log and generated training manifest.
 
-Raw challenge videos, patient data, and organizer annotations are not
-redistributed.
+DISCOVR-PROCEDURE is a research challenge system and is not intended for
+clinical decision support.
 
-## 16. Limitations
+## 11. Data and software terms
 
-- Sparse uniform sampling can miss short events in long procedures.
-- The cascade depends on a usable earlier timestamp; pointer error propagates
-  into later windows.
-- The reappearance rewrite applies only to a narrow recognized template.
-- W64's training-loss holdout was row-random, not video-disjoint.
-- The selected FOCUS manifests predate later upstream revisions.
-- NW2's exact training launch and source manifest have not yet been recovered.
-- This is a challenge research prototype, not a medical device or clinical
-  decision-support system.
-
-## 17. Licensing and data governance
-
-- Repository code: Apache-2.0.
-- Qwen3-VL base model: Apache-2.0.
-- SSG-VQA: CC BY-NC-SA 4.0 for non-commercial scientific research.
-- FOCUS, HeiCo, LapChole, CholecT45, and challenge assets: governed by their
-  respective owners and access terms.
-
-No credentials, raw patient videos, or private test annotations are included
-in the release.
-
-## 18. Items that must be verified before portal submission
-
-The following are the only material training-provenance gaps in the current
-draft:
-
-1. recover `capped_v1_64f.jsonl` or its generation report;
-2. record its row count, dataset/track distribution, and checksum;
-3. recover NW2's exact launch command, optimizer settings, epoch count, random
-   seed, evaluation split, and selected optimizer step;
-4. recover the rule used to select the 60,000-row SSG subset for
-   `q3vl4b_ssg_aux`;
-5. add the final author list, affiliations, and corresponding contact;
-6. apply any organizer template or page limit; and
-7. confirm the deadline in the live Grand Challenge portal, because the static
-   challenge dates page and portal text have shown different September dates.
-
-Until items 1–4 are recovered, the public checkpoint hashes and exact
-inference behavior are reproducible, while NW2 retraining is only partially
-reconstructable.
+The implementation and Qwen3-VL base model are distributed under Apache-2.0.
+SSG-VQA is provided for non-commercial scientific research under CC
+BY-NC-SA 4.0. FOCUS, HeiCo, LapChole, CholecT45, and associated videos remain
+subject to their respective owners' access and licensing terms. No raw patient
+videos or private challenge annotations are included in this release.

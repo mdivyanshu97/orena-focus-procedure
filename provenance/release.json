@@ -1,23 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "released_utc": "2026-09-08",
   "team": "Incision Impossible",
   "track": "PROCEDURE",
   "release_name": "DISCOVR-PROCEDURE",
-  "challenge_algorithm": {
-    "name": "DISCOVR PROCEDURE T1",
-    "method_id": "c0a82e5c-3b0c-4d54-bed3-777e1dc218af",
-    "image_version": "abe8063f-78f1-43ea-93ea-0b70c3eca1cd",
-    "evaluation_id": "a8fa6296-e08b-40b7-b2e5-759ba657fe6d",
-    "submission_id": "28ffba5e-6d24-448e-87ec-b5f7bf75104b",
+  "challenge_result": {
     "technical_pre_evaluation_score": 0.4112059081777602,
     "clinical_pre_evaluation_score": 0.5572717019874663,
     "questions_forfeited": 0,
     "questions_unanswered": 0
-  },
-  "container": {
-    "candidate": "w64-nw2-cross-procedure-reappearance-presence",
-    "archive_sha256": "d1a60e5513aa3e789dd454bb832d29f37f0d3800e8c05c41357f5a6b5d6dccb1"
   },
   "models": {
     "base_model": "Qwen/Qwen3-VL-4B-Instruct",

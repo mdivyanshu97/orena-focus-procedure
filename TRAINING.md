@@ -22,6 +22,7 @@ Both released checkpoints are bfloat16 merges of LoRA adapters into
 The original merge records are published beside each model on Hugging Face.
 Raw challenge videos and challenge-provided annotations are not redistributed.
 
-The full W64 recipe, shared data-generation process, inference routing,
-artifact hashes, and explicitly bounded NW2 provenance gaps are documented in
+The scientific method description documents the shared data construction,
+verified W64 optimization recipe, NW2 adaptation evidence, coarse-to-fine
+inference policy, evaluation, and limitations:
 [METHOD_DESCRIPTION.md](METHOD_DESCRIPTION.md).

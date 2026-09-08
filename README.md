@@ -3,19 +3,18 @@
 Reproducible release of **DISCOVR-PROCEDURE**, submitted to the ORena SAVE
 FOCUS 2026 PROCEDURE track by team **Incision Impossible**.
 
-This repository contains the exact inference source recovered from the selected
-W64→NW2 container. The two merged checkpoints are hosted separately on Hugging
-Face and can be downloaded into the Docker build context with one command.
+This repository contains the W64→NW2 inference implementation used for the
+reported challenge result, a scientific account of the method, and reproducible
+build and verification commands. The two merged checkpoints are hosted
+separately on Hugging Face.
 
-## Selected challenge submission
+## Challenge result
 
 | Field | Value |
 |---|---|
-| Release name | `DISCOVR-PROCEDURE` |
-| Grand Challenge algorithm | `DISCOVR PROCEDURE T1` |
-| Method ID | `c0a82e5c-3b0c-4d54-bed3-777e1dc218af` |
-| Image version | `abe8063f-78f1-43ea-93ea-0b70c3eca1cd` |
-| Evaluation ID | `a8fa6296-e08b-40b7-b2e5-759ba657fe6d` |
+| Algorithm | `DISCOVR-PROCEDURE` |
+| Team | Incision Impossible |
+| Track | PROCEDURE |
 | Technical pre-evaluation score | `0.4112059081777602` |
 | Clinical pre-evaluation score | `0.5572717019874663` |
 | Forfeited / unanswered | `0 / 0` |
@@ -52,9 +51,9 @@ flowchart TD
 The temporal cascade uses frame counts `(128, 128, 64)` and full window widths
 `(1200 s, 100 s)`. See [METHOD.md](METHOD.md) for the concise implementation
 description and [METHOD_DESCRIPTION.md](METHOD_DESCRIPTION.md) for the detailed
-challenge-submission draft covering data generation, model training,
-inference, evaluation, provenance, limitations, and the remaining NW2
-provenance checks.
+scientific method description covering the research rationale, data
+construction, model adaptation, coarse-to-fine temporal inference, evaluation,
+and limitations.
 
 ## Weights
 
