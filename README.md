@@ -57,6 +57,9 @@ W64 0647d7204fccbf708e5b15d8312d03062e86bea61310580b5eca97999c33fe4d
 NW2 3c032078c4e98a33bd7deb6b0f285ed45f0414d118fa1a086bd35d64546ba3e9
 ```
 
+The download script pins Hugging Face revision
+`4b49db331bf8e49007d19135aee48dfcf27c1bfa`.
+
 ## Build
 
 ```bash

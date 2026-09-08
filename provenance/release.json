@@ -21,6 +21,7 @@
   "models": {
     "base_model": "Qwen/Qwen3-VL-4B-Instruct",
     "public_repo": "Div97/orena-focus-procedure-w64-nw2",
+    "revision": "4b49db331bf8e49007d19135aee48dfcf27c1bfa",
     "w64_sha256": "0647d7204fccbf708e5b15d8312d03062e86bea61310580b5eca97999c33fe4d",
     "nw2_sha256": "3c032078c4e98a33bd7deb6b0f285ed45f0414d118fa1a086bd35d64546ba3e9",
     "size_bytes_each": 8875719408
